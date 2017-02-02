@@ -308,14 +308,14 @@ def main():
 
     ext = extension_from_parameters(args)
 
-    datagen = p1b3.RegressionDataGenerator(feature_subsample=args.feature_subsample,
-                                           scaling=args.scaling,
-                                           drug_features=args.drug_features,
-                                           scramble=args.scramble,
-                                           min_logconc=args.min_logconc,
-                                           max_logconc=args.max_logconc,
-                                           subsample=args.subsample,
-                                           category_cutoffs=args.category_cutoffs)
+    loader = p1b3.DataLoader(feature_subsample=args.feature_subsample,
+                             scaling=args.scaling,
+                             drug_features=args.drug_features,
+                             scramble=args.scramble,
+                             min_logconc=args.min_logconc,
+                             max_logconc=args.max_logconc,
+                             subsample=args.subsample,
+                             category_cutoffs=args.category_cutoffs)
 
     topology = 'dense'
     out_dim = 1
@@ -330,16 +330,16 @@ def main():
             if nb_filter <= 0 or filter_len <= 0:
                 break
             if args.convolution:
-                model.add(Convolution1D(nb_filter, filter_len, input_shape=(datagen.input_dim, 1), activation=args.activation))
+                model.add(Convolution1D(nb_filter, filter_len, input_shape=(loader.input_dim, 1), activation=args.activation))
             else:
-                model.add(LocallyConnected1D(nb_filter, filter_len, input_shape=(datagen.input_dim, 1), activation=args.activation))
+                model.add(LocallyConnected1D(nb_filter, filter_len, input_shape=(loader.input_dim, 1), activation=args.activation))
             if args.pool:
                 model.add(MaxPooling1D(pool_length=args.pool))
         model.add(Flatten())
 
     for layer in args.dense:
         if layer:
-            model.add(Dense(layer, input_dim=datagen.input_dim, activation=args.activation))
+            model.add(Dense(layer, input_dim=loader.input_dim, activation=args.activation))
             if args.drop:
                 model.add(Dropout(args.drop))
     model.add(Dense(out_dim))
@@ -347,14 +347,14 @@ def main():
     model.summary()
     model.compile(loss=args.loss, optimizer=args.optimizer)
 
-    train_gen = datagen.flow(batch_size=args.batch_size, topology=topology)
-    val_gen = datagen.flow(data='val', batch_size=args.batch_size, topology=topology)
-    val_gen2 = datagen.flow(data='val', batch_size=args.batch_size, topology=topology)
-    test_gen = datagen.flow(data='test', batch_size=args.batch_size, topology=topology)
+    train_gen = p1b3.DataGenerator(loader, batch_size=args.batch_size, topology=topology).flow()
+    val_gen = p1b3.DataGenerator(loader, partition='val', batch_size=args.batch_size, topology=topology).flow()
+    val_gen2 = p1b3.DataGenerator(loader, partition='val', batch_size=args.batch_size, topology=topology).flow()
+    test_gen = p1b3.DataGenerator(loader, partition='test', batch_size=args.batch_size, topology=topology).flow()
 
-    train_samples = int(datagen.n_train/args.batch_size) * args.batch_size
-    val_samples = int(datagen.n_val/args.batch_size) * args.batch_size
-    test_samples = int(datagen.n_test/args.batch_size) * args.batch_size
+    train_samples = int(loader.n_train/args.batch_size) * args.batch_size
+    val_samples = int(loader.n_val/args.batch_size) * args.batch_size
+    test_samples = int(loader.n_test/args.batch_size) * args.batch_size
 
     train_samples = args.train_samples if args.train_samples else train_samples
     val_samples = args.val_samples if args.val_samples else val_samples
