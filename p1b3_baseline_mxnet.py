@@ -264,6 +264,7 @@ def main():
             net = mx.sym.Activation(data=net, act_type=args.activation)
             if args.pool:
                 net = mx.sym.Pooling(data=net, pool_type="max", kernel=(args.pool, 1), stride=(1, 1))
+        net = mx.sym.Flatten(data=net)
 
     for layer in args.dense:
         if layer:
