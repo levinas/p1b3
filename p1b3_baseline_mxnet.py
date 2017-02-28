@@ -33,7 +33,7 @@ DROP = 0.1
 # Activation function (options: 'relu', 'tanh', 'sigmoid', 'hard_sigmoid', 'linear')
 ACTIVATION = 'relu'
 LOSS = 'mse'
-OPTIMIZER = 'adam'
+OPTIMIZER = 'sgd'
 
 # Type of feature scaling (options: 'maxabs': to [-1,1]
 #                                   'minmax': to [0,1]
@@ -51,11 +51,11 @@ D4 = 50
 DENSE_LAYERS = [D1, D2, D3, D4]
 
 # Number of units per locally connected layer
-LC1 = 10, 10        # nb_filter, filter_length
-LC2 = 0, 0         # disabled layer
-# LOCALLY_CONNECTED_LAYERS = list(LC1 + LC2)
-LOCALLY_CONNECTED_LAYERS = [0, 0]
-POOL = 100
+C1 = 10, 10, 5       # nb_filter, filter_length, stride
+C2 = 0, 0, 0         # disabled layer
+# CONVOLUTION_LAYERS = list(C1 + C2)
+CONVOLUTION_LAYERS = [0, 0, 0]
+POOL = 10
 
 MIN_LOGCONC = -5.
 MAX_LOGCONC = -4.
@@ -77,18 +77,18 @@ def get_parser():
     parser.add_argument("-b", "--batch_size", action="store",
                         default=BATCH_SIZE, type=int,
                         help="batch size")
-    parser.add_argument("-c", "--convolution", action="store_true",
-                        default=False,
-                        help="use convolution layers instead of locally connected layers")
+    parser.add_argument("-c", "--convolution", action="store", nargs='+', type=int,
+                        default=CONVOLUTION_LAYERS,
+                        help="integer array describing convolution layers: conv1_nb_filter, conv1_filter_len, conv1_stride, conv2_nb_filter, conv2_filter_len, conv2_stride ...")
     parser.add_argument("-d", "--dense", action="store", nargs='+', type=int,
                         default=DENSE_LAYERS,
                         help="number of units in fully connected layers in an integer array")
     parser.add_argument("-e", "--epochs", action="store",
                         default=NB_EPOCH, type=int,
                         help="number of training epochs")
-    parser.add_argument("-l", "--locally_connected", action="store", nargs='+', type=int,
-                        default=LOCALLY_CONNECTED_LAYERS,
-                        help="integer array describing locally connected layers: layer1_nb_filter, layer1_filter_len, layer2_nb_filter, layer2_filter_len, ...")
+    parser.add_argument("-l", "--locally_connected", action="store_true",
+                        default=False,  # TODO: not currently supported
+                        help="use locally connected layers instead of convolution layers")
     parser.add_argument("-o", "--optimizer", action="store",
                         default=OPTIMIZER,
                         help="keras optimizer to use: sgd, rmsprop, ...")
@@ -136,6 +136,9 @@ def get_parser():
     parser.add_argument("--workers", action="store",
                         default=NB_WORKER, type=int,
                         help="number of data generator workers")
+    parser.add_argument("--gpus", action="store", nargs='*',
+                        default=[], type=int,
+                        help="set IDs of GPUs to use")
 
     return parser
 
@@ -149,15 +152,16 @@ def extension_from_parameters(args):
     ext += '.E={}'.format(args.epochs)
     if args.feature_subsample:
         ext += '.F={}'.format(args.feature_subsample)
-    if args.locally_connected:
-        name = 'C' if args.convolution else 'LC'
-        layer_list = list(range(0, len(args.locally_connected), 2))
+    if args.convolution:
+        name = 'LC' if args.locally_connected else 'C'
+        layer_list = list(range(0, len(args.convolution), 3))
         for l, i in enumerate(layer_list):
-            nb_filter = args.locally_connected[i]
-            filter_len = args.locally_connected[i+1]
-            if nb_filter <= 0 or filter_len <= 0:
+            nb_filter = args.convolution[i]
+            filter_len = args.convolution[i+1]
+            stride = args.convolution[i+2]
+            if nb_filter <= 0 or filter_len <= 0 or stride <= 0:
                 break
-            ext += '.{}{}={},{}'.format(name, l+1, nb_filter, filter_len)
+            ext += '.{}{}={},{},{}'.format(name, l+1, nb_filter, filter_len, stride)
         if args.pool and layer_list[0] and layer_list[1]:
             ext += '.P={}'.format(args.pool)
     for i, n in enumerate(args.dense):
@@ -169,16 +173,18 @@ def extension_from_parameters(args):
 
 
 class ConcatDataIter(DataIter):
-
+    """Data iterator for concatenated features
+    """
 
     def __init__(self, data_loader,
                  partition='train',
                  batch_size=32,
-                 num_data=None):
+                 num_data=None,
+                 shape=None):
         super(ConcatDataIter, self).__init__()
         self.data = data_loader
         self.batch_size = batch_size
-        self.gen = p1b3.DataGenerator(data_loader, partition=partition, batch_size=batch_size, concat=True)
+        self.gen = p1b3.DataGenerator(data_loader, partition=partition, batch_size=batch_size, shape=shape, concat=True)
         self.num_data = num_data or self.gen.num_data
         self.cursor = 0
         self.gen = self.gen.flow()
@@ -191,9 +197,6 @@ class ConcatDataIter(DataIter):
     def provide_label(self):
         return [('growth', (self.batch_size,))]
 
-    # def iter_next(self):
-        # return True
-
     def reset(self):
         self.cursor = 0
 
@@ -203,9 +206,6 @@ class ConcatDataIter(DataIter):
             return True
         else:
             return False
-
-    # def get_batch_size(self):
-        # return self.batch_size
 
     def next(self):
         if self.iter_next():
@@ -248,11 +248,22 @@ def main():
                              subsample=args.subsample,
                              category_cutoffs=args.category_cutoffs)
 
-    train_iter = ConcatDataIter(loader, batch_size=args.batch_size, num_data=args.train_samples)
-    val_iter = ConcatDataIter(loader, partition='val', batch_size=args.batch_size, num_data=args.val_samples)
-
     net = mx.sym.Variable('concat_features')
     out = mx.sym.Variable('growth')
+
+    if args.convolution and args.convolution[0]:
+        net = mx.sym.Reshape(data=net, shape=(args.batch_size, 1, loader.input_dim, 1))
+        layer_list = list(range(0, len(args.convolution), 3))
+        for l, i in enumerate(layer_list):
+            nb_filter = args.convolution[i]
+            filter_len = args.convolution[i+1]
+            stride = args.convolution[i+2]
+            if nb_filter <= 0 or filter_len <= 0 or stride <= 0:
+                break
+            net = mx.sym.Convolution(data=net, num_filter=nb_filter, kernel=(filter_len, 1), stride=(stride, 1))
+            net = mx.sym.Activation(data=net, act_type=args.activation)
+            if args.pool:
+                net = mx.sym.Pooling(data=net, pool_type="max", kernel=(args.pool, 1), stride=(1, 1))
 
     for layer in args.dense:
         if layer:
@@ -265,10 +276,17 @@ def main():
 
     plot_network(net, 'net'+ext)
 
+    train_iter = ConcatDataIter(loader, batch_size=args.batch_size, num_data=args.train_samples)
+    val_iter = ConcatDataIter(loader, partition='val', batch_size=args.batch_size, num_data=args.val_samples)
+
+    devices = mx.cpu()
+    if args.gpus:
+        devices = [mx.gpu(i) for i in args.gpus]
+
     mod = mx.mod.Module(net,
                         data_names=('concat_features',),
                         label_names=('growth',),
-                        )
+                        context=devices)
 
     mod.fit(train_iter, eval_data=val_iter,
             eval_metric=args.loss,
