@@ -5,13 +5,16 @@ import logging
 
 import numpy as np
 
-import mxnet as mx
-from mxnet.io import DataBatch, DataIter
+import neon
+from neon.util.argparser import NeonArgparser
+from neon.callbacks.callbacks import Callbacks
+from neon.initializers import Gaussian
+from neon.layers import GeneralizedCost, Affine
+from neon.models import Model
+from neon.optimizers import GradientDescentMomentum
+from neon.transforms import Rectlin, Logistic, CrossEntropyBinary, Misclassification, Identity
+from neon.transforms import MeanSquared
 
-# # For non-interactive plotting
-# import matplotlib as mpl
-# mpl.use('Agg')
-# import matplotlib.pyplot as plt
 
 import p1b3
 
@@ -66,29 +69,35 @@ np.random.seed(SEED)
 
 
 def get_parser():
-    parser = argparse.ArgumentParser(prog='p1b3_baseline',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-v", "--verbose", action="store_true",
-                        help="increase output verbosity")
+    defs = {}
+    defs['batch_size'] = BATCH_SIZE
+    parser = NeonArgparser(__doc__, default_overrides=defs)
+
+    print(parser.defaults)
+
+    # parser = argparse.ArgumentParser(prog='p1b3_baseline',
+    #                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    # parser.add_argument("-v", "--verbose", action="store_true",
+                        # help="increase output verbosity")
     parser.add_argument("-a", "--activation", action="store",
                         default=ACTIVATION,
                         help="keras activation function to use in inner layers: relu, tanh, sigmoid...")
-    parser.add_argument("-b", "--batch_size", action="store",
-                        default=BATCH_SIZE, type=int,
-                        help="batch size")
-    parser.add_argument("-c", "--convolution", action="store", nargs='+', type=int,
+    # parser.add_argument("-b", "--batch_size", action="store",
+    #                     default=BATCH_SIZE, type=int,
+    #                     help="batch size")
+    parser.add_argument("--convolution", action="store", nargs='+', type=int,
                         default=CONVOLUTION_LAYERS,
                         help="integer array describing convolution layers: conv1_nb_filter, conv1_filter_len, conv1_stride, conv2_nb_filter, conv2_filter_len, conv2_stride ...")
-    parser.add_argument("-d", "--dense", action="store", nargs='+', type=int,
+    parser.add_argument("--dense", action="store", nargs='+', type=int,
                         default=DENSE_LAYERS,
                         help="number of units in fully connected layers in an integer array")
-    parser.add_argument("-e", "--epochs", action="store",
-                        default=NB_EPOCH, type=int,
-                        help="number of training epochs")
-    parser.add_argument("-l", "--locally_connected", action="store_true",
+    # parser.add_argument("-e", "--epochs", action="store",
+    #                     default=NB_EPOCH, type=int,
+    #                     help="number of training epochs")
+    parser.add_argument("--locally_connected", action="store_true",
                         default=False,  # TODO: not currently supported
                         help="use locally connected layers instead of convolution layers")
-    parser.add_argument("-o", "--optimizer", action="store",
+    parser.add_argument("--optimizer", action="store",
                         default=OPTIMIZER,
                         help="keras optimizer to use: sgd, rmsprop, ...")
     parser.add_argument("--drop", action="store",
@@ -144,7 +153,7 @@ def get_parser():
 
 def extension_from_parameters(args):
     """Construct string for saving model with annotation of parameters"""
-    ext = '.mx'
+    ext = '.neon'
     ext += '.A={}'.format(args.activation)
     ext += '.B={}'.format(args.batch_size)
     ext += '.D={}'.format(args.drop)
@@ -171,59 +180,84 @@ def extension_from_parameters(args):
     return ext
 
 
-class ConcatDataIter(DataIter):
-    """Data iterator for concatenated features
+class ConcatDataIter(neon.NervanaObject):
+    """
+    Data iterator for concatenated features
+    Modeled after ArrayIterator: https://github.com/NervanaSystems/neon/blob/master/neon/data/dataiterator.py
     """
 
     def __init__(self, data_loader,
                  partition='train',
                  batch_size=32,
-                 num_data=None,
-                 shape=None):
+                 ndata=None):
+        """
+        During initialization, the input data will be converted to backend tensor objects
+        (e.g. CPUTensor or GPUTensor). If the backend uses the GPU, the data is copied over to the
+        device.
+        """
         super(ConcatDataIter, self).__init__()
         self.data = data_loader
         self.batch_size = batch_size
-        self.gen = p1b3.DataGenerator(data_loader, partition=partition, batch_size=batch_size, shape=shape, concat=True)
-        self.num_data = num_data or self.gen.num_data
-        self.cursor = 0
+        self.gen = p1b3.DataGenerator(data_loader, partition=partition, batch_size=batch_size, concat=True)
+        self.ndata = ndata or self.gen.num_data
+        assert self.ndata >= self.be.bsz
         self.gen = self.gen.flow()
+        self.start = 0
+        self.ybuf = None
+        self.shape = data_loader.input_dim
 
     @property
-    def provide_data(self):
-        return [('concat_features', (self.batch_size, self.data.input_dim))]
-
-    @property
-    def provide_label(self):
-        return [('growth', (self.batch_size,))]
+    def nbatches(self):
+        """
+        Return the number of minibatches in this dataset.
+        """
+        return (self.ndata - self.start) // self.be.bsz
 
     def reset(self):
-        self.cursor = 0
+        self.start = 0
 
-    def iter_next(self):
-        self.cursor += self.batch_size
-        if self.cursor <= self.num_data:
-            return True
-        else:
-            return False
+    def __iter__(self):
+        """
+        Returns a new minibatch of data with each call.
 
-    def next(self):
-        if self.iter_next():
+        Yields:
+            tuple: The next minibatch which includes both features and labels.
+        """
+
+        def transpose_gen(z):
+            return (self.be.array(z), self.be.iobuf(z.shape[1]),
+                    lambda _in, _out: self.be.copy_transpose(_in, _out))
+
+        for i1 in range(self.start, self.ndata, self.be.bsz):
+            bsz = min(self.be.bsz, self.ndata - i1)
+            # islice1, oslice1 = slice(0, bsz), slice(i1, i1 + bsz)
+            islice1, oslice1 = slice(0, bsz), slice(0, bsz)
+            islice2, oslice2 = None, None
+            if self.be.bsz > bsz:
+                islice2, oslice2 = slice(bsz, None), slice(0, self.be.bsz - bsz)
+                self.start = self.be.bsz - bsz
+
             x, y = next(self.gen)
-            return DataBatch(data=[mx.nd.array(x)], label=[mx.nd.array(y)])
-        else:
-            raise StopIteration
+            X = [x]
+            y = y.reshape(y.shape + (1,))
 
+            self.Xdev, self.Xbuf, self.unpack_func = list(zip(*[transpose_gen(x) for x in X]))
+            self.dbuf, self.hbuf = list(self.Xdev), list(self.Xbuf)
+            self.unpack_func = list(self.unpack_func)
 
-def plot_network(net, filename):
-    try:
-        dot = mx.viz.plot_network(net)
-    except ImportError:
-        return
-    try:
-        dot.render(filename, view=False)
-        print('Plotted network architecture in {}'.format(filename+'.pdf'))
-    except Exception:
-        return
+            self.ydev, self.ybuf, yfunc = transpose_gen(y)
+            self.dbuf.append(self.ydev)
+            self.hbuf.append(self.ybuf)
+            self.unpack_func.append(yfunc)
+
+            for buf, dev, unpack_func in zip(self.hbuf, self.dbuf, self.unpack_func):
+                unpack_func(dev[oslice1], buf[:, islice1])
+                if oslice2:
+                    unpack_func(dev[oslice2], buf[:, islice2])
+
+            inputs = self.Xbuf[0] if len(self.Xbuf) == 1 else self.Xbuf
+            targets = self.ybuf if self.ybuf else inputs
+            yield (inputs, targets)
 
 
 def main():
@@ -245,52 +279,22 @@ def main():
                              subsample=args.subsample,
                              category_cutoffs=args.category_cutoffs)
 
-    net = mx.sym.Variable('concat_features')
-    out = mx.sym.Variable('growth')
+    init_norm = Gaussian(loc=0.0, scale=0.01)
 
-    if args.convolution and args.convolution[0]:
-        net = mx.sym.Reshape(data=net, shape=(args.batch_size, 1, loader.input_dim, 1))
-        layer_list = list(range(0, len(args.convolution), 3))
-        for l, i in enumerate(layer_list):
-            nb_filter = args.convolution[i]
-            filter_len = args.convolution[i+1]
-            stride = args.convolution[i+2]
-            if nb_filter <= 0 or filter_len <= 0 or stride <= 0:
-                break
-            net = mx.sym.Convolution(data=net, num_filter=nb_filter, kernel=(filter_len, 1), stride=(stride, 1))
-            net = mx.sym.Activation(data=net, act_type=args.activation)
-            if args.pool:
-                net = mx.sym.Pooling(data=net, pool_type="max", kernel=(args.pool, 1), stride=(1, 1))
-        net = mx.sym.Flatten(data=net)
+    layers = []
+    layers.append(Affine(nout=100, init=init_norm, activation=neon.transforms.Rectlin()))
+    layers.append(Affine(nout=1, init=init_norm, activation=Identity()))
 
-    for layer in args.dense:
-        if layer:
-            net = mx.sym.FullyConnected(data=net, num_hidden=layer)
-            net = mx.sym.Activation(data=net, act_type=args.activation)
-        if args.drop:
-            net = mx.sym.Dropout(data=net, p=args.drop)
-    net = mx.sym.FullyConnected(data=net, num_hidden=1)
-    net = mx.symbol.LinearRegressionOutput(data=net, label=out)
+    train_iter = ConcatDataIter(loader, batch_size=args.batch_size, ndata=args.train_samples)
+    val_iter = ConcatDataIter(loader, partition='val', batch_size=args.batch_size, ndata=args.val_samples)
 
-    plot_network(net, 'net'+ext)
+    cost = GeneralizedCost(MeanSquared())
+    model = Model(layers=layers)
 
-    train_iter = ConcatDataIter(loader, batch_size=args.batch_size, num_data=args.train_samples)
-    val_iter = ConcatDataIter(loader, partition='val', batch_size=args.batch_size, num_data=args.val_samples)
+    optimizer = GradientDescentMomentum(0.1, momentum_coef=0.9)
+    callbacks = Callbacks(model, eval_set=val_iter, **args.callback_args)
 
-    devices = mx.cpu()
-    if args.gpus:
-        devices = [mx.gpu(i) for i in args.gpus]
-
-    mod = mx.mod.Module(net,
-                        data_names=('concat_features',),
-                        label_names=('growth',),
-                        context=devices)
-
-    mod.fit(train_iter, eval_data=val_iter,
-            eval_metric=args.loss,
-            optimizer=args.optimizer,
-            num_epoch=args.epochs,
-            batch_end_callback = mx.callback.Speedometer(args.batch_size, 20))
+    model.fit(train_iter, optimizer=optimizer, num_epochs=args.epochs, cost=cost, callbacks=callbacks)
 
 
 if __name__ == '__main__':
