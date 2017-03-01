@@ -321,20 +321,20 @@ def main():
     activation = get_function(args.activation)()
 
     layers = []
+    reshape = None
 
     if args.convolution and args.convolution[0]:
-        # layers.append(Reshape(reshape=(loader.input_dim, 1, 1)))
+        reshape = (1, loader.input_dim, 1)
         layer_list = list(range(0, len(args.convolution), 3))
         for l, i in enumerate(layer_list):
             nb_filter = args.convolution[i]
             filter_len = args.convolution[i+1]
             stride = args.convolution[i+2]
-            print(nb_filter, filter_len, stride)
-            # layers.append(Conv((1, filter_len, nb_filter), strides=stride, init=initializer, activation=activation))
-            # layers.append(Conv((1, filter_len, nb_filter), init=initializer, activation=activation))
-            layers.append(Conv((1, 2, 1), init=initializer, activation=activation))
-            # if args.pool:
-                # layers.append(Pooling(args.pool))
+            # print(nb_filter, filter_len, stride)
+            # fshape: (height, width, num_filters).
+            layers.append(Conv((1, filter_len, nb_filter), strides={'str_h':1, 'str_w':stride}, init=initializer, activation=activation))
+            if args.pool:
+                layers.append(Pooling((1, args.pool)))
 
     for layer in args.dense:
         if layer:
@@ -345,8 +345,8 @@ def main():
 
     model = Model(layers=layers)
 
-    train_iter = ConcatDataIter(loader, ndata=args.train_samples, lshape=(1, loader.input_dim, 1), datatype=args.datatype)
-    val_iter = ConcatDataIter(loader, partition='val', ndata=args.val_samples, lshape=(1, loader.input_dim, 1), datatype=args.datatype)
+    train_iter = ConcatDataIter(loader, ndata=args.train_samples, lshape=reshape, datatype=args.datatype)
+    val_iter = ConcatDataIter(loader, partition='val', ndata=args.val_samples, lshape=reshape, datatype=args.datatype)
 
     cost = GeneralizedCost(get_function(args.loss)())
     optimizer = get_function(args.optimizer)()
