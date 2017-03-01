@@ -8,12 +8,14 @@ import numpy as np
 import neon
 from neon.util.argparser import NeonArgparser
 from neon.callbacks.callbacks import Callbacks
-from neon.initializers import Gaussian
-from neon.layers import GeneralizedCost, Affine
+from neon.initializers import Gaussian, GlorotUniform
+from neon.layers import GeneralizedCost, Affine, Conv, Dropout, Pooling, Reshape
 from neon.models import Model
 from neon.optimizers import GradientDescentMomentum
-from neon.transforms import Rectlin, Logistic, CrossEntropyBinary, Misclassification, Identity
-from neon.transforms import MeanSquared
+from neon.transforms import Identity
+# from neon.transforms import MeanSquared
+
+from neon import transforms
 
 
 import p1b3
@@ -22,7 +24,7 @@ import p1b3
 # Model and Training parameters
 
 # Seed for random generation
-SEED = 2016
+SEED = 2017
 # Size of batch for training
 BATCH_SIZE = 100
 # Number of training epochs
@@ -32,7 +34,7 @@ NB_WORKER = 1
 
 # Percentage of dropout used in training
 DROP = 0.1
-# Activation function (options: 'relu', 'tanh', 'sigmoid', 'hard_sigmoid', 'linear')
+# Activation function (options: 'relu', 'tanh', 'sigmoid', 'linear')
 ACTIVATION = 'relu'
 LOSS = 'mse'
 OPTIMIZER = 'sgd'
@@ -69,11 +71,9 @@ np.random.seed(SEED)
 
 
 def get_parser():
-    defs = {}
-    defs['batch_size'] = BATCH_SIZE
-    parser = NeonArgparser(__doc__, default_overrides=defs)
+    params = {'batch_size': BATCH_SIZE, 'epochs': NB_EPOCH}
 
-    print(parser.defaults)
+    parser = NeonArgparser(__doc__, default_overrides=params)
 
     # parser = argparse.ArgumentParser(prog='p1b3_baseline',
     #                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -188,8 +188,9 @@ class ConcatDataIter(neon.NervanaObject):
 
     def __init__(self, data_loader,
                  partition='train',
-                 batch_size=32,
-                 ndata=None):
+                 ndata=None,
+                 lshape=None,
+                 datatype=np.float32):
         """
         During initialization, the input data will be converted to backend tensor objects
         (e.g. CPUTensor or GPUTensor). If the backend uses the GPU, the data is copied over to the
@@ -197,14 +198,15 @@ class ConcatDataIter(neon.NervanaObject):
         """
         super(ConcatDataIter, self).__init__()
         self.data = data_loader
-        self.batch_size = batch_size
-        self.gen = p1b3.DataGenerator(data_loader, partition=partition, batch_size=batch_size, concat=True)
+        self.gen = p1b3.DataGenerator(data_loader, partition=partition, batch_size=self.be.bsz, concat=True)
         self.ndata = ndata or self.gen.num_data
         assert self.ndata >= self.be.bsz
+        self.datatype = datatype
         self.gen = self.gen.flow()
         self.start = 0
         self.ybuf = None
-        self.shape = data_loader.input_dim
+        self.shape = lshape or data_loader.input_dim
+        self.lshape = lshape
 
     @property
     def nbatches(self):
@@ -238,6 +240,9 @@ class ConcatDataIter(neon.NervanaObject):
                 self.start = self.be.bsz - bsz
 
             x, y = next(self.gen)
+            x = np.ascontiguousarray(x).astype(self.datatype)
+            y = np.ascontiguousarray(y).astype(self.datatype)
+
             X = [x]
             y = y.reshape(y.shape + (1,))
 
@@ -257,7 +262,39 @@ class ConcatDataIter(neon.NervanaObject):
 
             inputs = self.Xbuf[0] if len(self.Xbuf) == 1 else self.Xbuf
             targets = self.ybuf if self.ybuf else inputs
+
             yield (inputs, targets)
+
+
+def get_function(name):
+    mapping = {}
+
+    # activation
+    mapping['relu'] = neon.transforms.activation.Rectlin
+    mapping['sigmoid'] = neon.transforms.activation.Logistic
+    mapping['tanh'] = neon.transforms.activation.Tanh
+    mapping['linear'] = neon.transforms.activation.Identity
+
+    # loss
+    mapping['mse'] = neon.transforms.cost.MeanSquared
+    mapping['binary_crossentropy'] = neon.transforms.cost.CrossEntropyBinary
+    mapping['categorical_crossentropy'] = neon.transforms.cost.CrossEntropyMulti
+
+    # optimizer
+    def SGD(learning_rate=0.01, momentum_coef=0.9, gradient_clip_value=5):
+        return GradientDescentMomentum(learning_rate, momentum_coef, gradient_clip_value)
+
+    mapping['sgd'] = SGD
+    mapping['rmsprop'] = neon.optimizers.optimizer.RMSProp
+    mapping['adam'] = neon.optimizers.optimizer.Adam
+    mapping['adagrad'] = neon.optimizers.optimizer.Adagrad
+    mapping['adadelta'] = neon.optimizers.optimizer.Adadelta
+
+    mapped = mapping.get(name)
+    if not mapped:
+        raise Exception('No neon function found for "{}"'.format(name))
+
+    return mapped
 
 
 def main():
@@ -279,19 +316,40 @@ def main():
                              subsample=args.subsample,
                              category_cutoffs=args.category_cutoffs)
 
-    init_norm = Gaussian(loc=0.0, scale=0.01)
+    # initializer = Gaussian(loc=0.0, scale=0.01)
+    initializer = GlorotUniform()
+    activation = get_function(args.activation)()
 
     layers = []
-    layers.append(Affine(nout=100, init=init_norm, activation=neon.transforms.Rectlin()))
-    layers.append(Affine(nout=1, init=init_norm, activation=Identity()))
 
-    train_iter = ConcatDataIter(loader, batch_size=args.batch_size, ndata=args.train_samples)
-    val_iter = ConcatDataIter(loader, partition='val', batch_size=args.batch_size, ndata=args.val_samples)
+    if args.convolution and args.convolution[0]:
+        # layers.append(Reshape(reshape=(loader.input_dim, 1, 1)))
+        layer_list = list(range(0, len(args.convolution), 3))
+        for l, i in enumerate(layer_list):
+            nb_filter = args.convolution[i]
+            filter_len = args.convolution[i+1]
+            stride = args.convolution[i+2]
+            print(nb_filter, filter_len, stride)
+            # layers.append(Conv((1, filter_len, nb_filter), strides=stride, init=initializer, activation=activation))
+            # layers.append(Conv((1, filter_len, nb_filter), init=initializer, activation=activation))
+            layers.append(Conv((1, 2, 1), init=initializer, activation=activation))
+            # if args.pool:
+                # layers.append(Pooling(args.pool))
 
-    cost = GeneralizedCost(MeanSquared())
+    for layer in args.dense:
+        if layer:
+            layers.append(Affine(nout=layer, init=initializer, activation=activation))
+        if args.drop:
+            layers.append(Dropout(keep=(1-args.drop)))
+    layers.append(Affine(nout=1, init=initializer, activation=neon.transforms.Identity()))
+
     model = Model(layers=layers)
 
-    optimizer = GradientDescentMomentum(0.1, momentum_coef=0.9)
+    train_iter = ConcatDataIter(loader, ndata=args.train_samples, lshape=(1, loader.input_dim, 1), datatype=args.datatype)
+    val_iter = ConcatDataIter(loader, partition='val', ndata=args.val_samples, lshape=(1, loader.input_dim, 1), datatype=args.datatype)
+
+    cost = GeneralizedCost(get_function(args.loss)())
+    optimizer = get_function(args.optimizer)()
     callbacks = Callbacks(model, eval_set=val_iter, **args.callback_args)
 
     model.fit(train_iter, optimizer=optimizer, num_epochs=args.epochs, cost=cost, callbacks=callbacks)
