@@ -286,10 +286,12 @@ def main():
                         label_names=('growth',),
                         context=devices)
 
+    initializer = mx.init.Xavier(factor_type="in", magnitude=2.34)
     mod.fit(train_iter, eval_data=val_iter,
             eval_metric=args.loss,
             optimizer=args.optimizer,
             num_epoch=args.epochs,
+            initializer=initializer,
             batch_end_callback = mx.callback.Speedometer(args.batch_size, 20))
 
 
