@@ -119,8 +119,13 @@ def get_parser():
     parser.add_argument("--scaling", action="store",
                         default=SCALING,
                         help="type of feature scaling; 'minabs': to [-1,1]; 'minmax': to [0,1], 'std': standard unit normalization; None: no normalization")
-    parser.add_argument("--drug_features", action="store",
-                        default="descriptors",
+    parser.add_argument("--cell_features", action="store", nargs='+',
+                        default=['expression'],
+                        choices=['expression', 'mirna', 'proteome', 'all', 'categorical'],
+                        help="use one or more cell line feature sets: 'expression', 'mirna', 'proteome', 'all'; or use 'categorical' for one-hot encoding of cell lines")
+    parser.add_argument("--drug_features", action="store", nargs='+',
+                        default=['descriptors'],
+                        choices=['descriptors', 'latent', 'both', 'noise'],
                         help="use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder, or both, or random features; 'descriptors','latent', 'both', 'noise'")
     parser.add_argument("--feature_subsample", action="store",
                         default=FEATURE_SUBSAMPLE, type=int,
@@ -316,6 +321,7 @@ def main():
 
     loader = p1b3.DataLoader(feature_subsample=args.feature_subsample,
                              scaling=args.scaling,
+                             cell_features=args.cell_features,
                              drug_features=args.drug_features,
                              scramble=args.scramble,
                              min_logconc=args.min_logconc,
