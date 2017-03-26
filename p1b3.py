@@ -438,10 +438,10 @@ class DataLoader(object):
         logger.debug('Combined train and validation set has {} rows'.format(df_train_val.shape[0]))
 
         if test_cell_split and test_cell_split > 0:
-            df_test_cell = df_train_val[['CELLNAME']].drop_duplicates().sample(frac=1.0, random_state=50).sample(frac=test_cell_split, random_state=SEED)
-            logger.info('Use unseen drugs and a fraction of seen cell lines for testing: ' + ', '.join(sorted(list(df_test_cell['CELLNAME']))))
+            df_test_cell = df_train_val[['CELLNAME']].drop_duplicates().sample(frac=test_cell_split, random_state=SEED)
+            logger.debug('Use unseen drugs and a fraction of seen cell lines for testing: ' + ', '.join(sorted(list(df_test_cell['CELLNAME']))))
         else:
-            logger.info('Use unseen drugs and predefined unseen cell lines for testing: ' + ', '.join(sorted(list(df_test_cell['CELLNAME']))))
+            logger.debug('Use unseen drugs and predefined unseen cell lines for testing: ' + ', '.join(sorted(list(df_test_cell['CELLNAME']))))
 
         df_test = df.merge(df_test_cell, on='CELLNAME').merge(df_test_drug, on='NSC')
         logger.debug('Test set has {} rows'.format(df_test.shape[0]))

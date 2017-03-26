@@ -55,8 +55,8 @@ OPTIMIZER = 'sgd'
 #                                   None    : standard normalization
 SCALING = 'std'
 # Features to (randomly) sample from cell lines or drug descriptors
-FEATURE_SUBSAMPLE = 500#0
-# FEATURE_SUBSAMPLE = 0
+# FEATURE_SUBSAMPLE = 500
+FEATURE_SUBSAMPLE = 0
 
 # Number of units in fully connected (dense) layers
 D1 = 1000
@@ -73,6 +73,9 @@ MIN_LOGCONC = -5.
 MAX_LOGCONC = -4.
 
 CATEGORY_CUTOFFS = [0.]
+
+VAL_SPLIT = 0.2
+TEST_CELL_SPLIT = None
 
 np.set_printoptions(threshold=np.nan)
 np.random.seed(SEED)
@@ -142,10 +145,10 @@ def get_parser():
                         default=CATEGORY_CUTOFFS,
                         help="list of growth cutoffs (between -1 and +1) seperating non-response and response categories")
     parser.add_argument("--val_split", action="store",
-                        default=0.2, type=float,
+                        default=VAL_SPLIT, type=float,
                         help="fraction of data to use in validation")
     parser.add_argument("--test_cell_split", action="store",
-                        default=None, type=float,
+                        default=TEST_CELL_SPLIT, type=float,
                         help="cell lines to use in test; if None use predefined unseen cell lines instead of sampling cell lines used in training")
     parser.add_argument("--train_steps", action="store",
                         default=0, type=int,
