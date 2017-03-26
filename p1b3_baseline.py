@@ -38,9 +38,9 @@ SEED = 2016
 # Size of batch for training
 BATCH_SIZE = 100
 # Number of training epochs
-NB_EPOCH = 20
+EPOCHS = 20
 # Number of data generator workers
-NB_WORKER = 1
+WORKERS = 1
 
 # Percentage of dropout used in training
 DROP = 0.1
@@ -66,10 +66,7 @@ D4 = 50
 DENSE_LAYERS = [D1, D2, D3, D4]
 
 # Number of units per locally connected layer
-C1 = 10, 10, 5       # nb_filter, filter_length, stride
-C2 = 0, 0, 0         # disabled layer
-# CONVOLUTION_LAYERS = list(C1 + C2)
-CONVOLUTION_LAYERS = [0, 0, 0]
+CONVOLUTION_LAYERS = [0, 0, 0] # filters, filter_len, stride
 POOL = 10
 
 MIN_LOGCONC = -5.
@@ -89,27 +86,27 @@ def get_parser():
     parser.add_argument("-a", "--activation", action="store",
                         default=ACTIVATION,
                         help="keras activation function to use in inner layers: relu, tanh, sigmoid...")
-    parser.add_argument("-b", "--batch_size", action="store",
+    parser.add_argument("-e", "--epochs", action="store",
+                        default=EPOCHS, type=int,
+                        help="number of training epochs")
+    parser.add_argument("-z", "--batch_size", action="store",
                         default=BATCH_SIZE, type=int,
                         help="batch size")
-    parser.add_argument("-c", "--convolution", action="store", nargs='+', type=int,
+    parser.add_argument("--convolution", action="store", nargs='+', type=int,
                         default=CONVOLUTION_LAYERS,
-                        help="integer array describing convolution layers: conv1_nb_filter, conv1_filter_len, conv1_stride, conv2_nb_filter, conv2_filter_len, conv2_stride ...")
-    parser.add_argument("-d", "--dense", action="store", nargs='+', type=int,
+                        help="integer array describing convolution layers: conv1_filters, conv1_filter_len, conv1_stride, conv2_filters, conv2_filter_len, conv2_stride ...")
+    parser.add_argument("--dense", action="store", nargs='+', type=int,
                         default=DENSE_LAYERS,
                         help="number of units in fully connected layers in an integer array")
-    parser.add_argument("-e", "--epochs", action="store",
-                        default=NB_EPOCH, type=int,
-                        help="number of training epochs")
-    parser.add_argument("-l", "--locally_connected", action="store_true",
-                        default=False,
-                        help="use locally connected layers instead of convolution layers")
-    parser.add_argument("-o", "--optimizer", action="store",
-                        default=OPTIMIZER,
-                        help="keras optimizer to use: sgd, rmsprop, ...")
     parser.add_argument("--drop", action="store",
                         default=DROP, type=float,
                         help="ratio of dropout used in fully connected layers")
+    parser.add_argument("--locally_connected", action="store_true",
+                        default=False,
+                        help="use locally connected layers instead of convolution layers")
+    parser.add_argument("--optimizer", action="store",
+                        default=OPTIMIZER,
+                        help="keras optimizer to use: sgd, rmsprop, ...")
     parser.add_argument("--loss", action="store",
                         default=LOSS,
                         help="keras loss function to use: mse, ...")
@@ -154,7 +151,7 @@ def get_parser():
     parser.add_argument("--scramble", action="store_true",
                         help="randomly shuffle dose response data")
     parser.add_argument("--workers", action="store",
-                        default=NB_WORKER, type=int,
+                        default=WORKERS, type=int,
                         help="number of data generator workers")
 
     return parser
@@ -173,12 +170,12 @@ def extension_from_parameters(args):
         name = 'LC' if args.locally_connected else 'C'
         layer_list = list(range(0, len(args.convolution), 3))
         for l, i in enumerate(layer_list):
-            nb_filter = args.convolution[i]
+            filters = args.convolution[i]
             filter_len = args.convolution[i+1]
             stride = args.convolution[i+2]
-            if nb_filter <= 0 or filter_len <= 0 or stride <= 0:
+            if filters <= 0 or filter_len <= 0 or stride <= 0:
                 break
-            ext += '.{}{}={},{},{}'.format(name, l+1, nb_filter, filter_len, stride)
+            ext += '.{}{}={},{},{}'.format(name, l+1, filters, filter_len, stride)
         if args.pool and layer_list[0] and layer_list[1]:
             ext += '.P={}'.format(args.pool)
     for i, n in enumerate(args.dense):
@@ -337,17 +334,17 @@ def main():
         gen_shape = 'add_1d'
         layer_list = list(range(0, len(args.convolution), 3))
         for l, i in enumerate(layer_list):
-            nb_filter = args.convolution[i]
+            filters = args.convolution[i]
             filter_len = args.convolution[i+1]
             stride = args.convolution[i+2]
-            if nb_filter <= 0 or filter_len <= 0 or stride <= 0:
+            if filters <= 0 or filter_len <= 0 or stride <= 0:
                 break
             if args.locally_connected:
-                model.add(LocallyConnected1D(nb_filter, filter_len, subsample_length=stride, input_shape=(loader.input_dim, 1), activation=args.activation))
+                model.add(LocallyConnected1D(filters, filter_len, strides=stride, input_shape=(loader.input_dim, 1), activation=args.activation))
             else:
-                model.add(Convolution1D(nb_filter, filter_len, subsample_length=stride, input_shape=(loader.input_dim, 1), activation=args.activation))
+                model.add(Convolution1D(filters, filter_len, strides=stride, input_shape=(loader.input_dim, 1), activation=args.activation))
             if args.pool:
-                model.add(MaxPooling1D(pool_length=args.pool))
+                model.add(MaxPooling1D(pool_size=args.pool))
         model.add(Flatten())
 
     for layer in args.dense:
