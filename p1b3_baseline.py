@@ -75,7 +75,7 @@ MAX_LOGCONC = -4.
 CATEGORY_CUTOFFS = [0.]
 
 VAL_SPLIT = 0.2
-TEST_CELL_SPLIT = None
+TEST_CELL_SPLIT = 0.15
 
 np.set_printoptions(threshold=np.nan)
 np.random.seed(SEED)
