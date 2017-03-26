@@ -115,7 +115,8 @@ def get_parser():
                         help="pooling layer length")
     parser.add_argument("--scaling", action="store",
                         default=SCALING,
-                        help="type of feature scaling; 'minabs': to [-1,1]; 'minmax': to [0,1], 'std': standard unit normalization; None: no normalization")
+                        choices=['minabs', 'minmax', 'std', 'none'],
+                        help="type of feature scaling; 'minabs': to [-1,1]; 'minmax': to [0,1], 'std': standard unit normalization; 'none': no normalization")
     parser.add_argument("--cell_features", action="store", nargs='+',
                         default=['expression'],
                         choices=['expression', 'mirna', 'proteome', 'all', 'categorical'],
@@ -135,16 +136,26 @@ def get_parser():
                         help="max log concentration of dose response data to use: -3.0 to -7.0")
     parser.add_argument("--subsample", action="store",
                         default='naive_balancing',
-                        help="dose response subsample strategy; None or 'naive_balancing'")
+                        choices=['naive_balancing', 'none'],
+                        help="dose response subsample strategy; 'none' or 'naive_balancing'")
     parser.add_argument("--category_cutoffs", action="store", nargs='+', type=float,
                         default=CATEGORY_CUTOFFS,
                         help="list of growth cutoffs (between -1 and +1) seperating non-response and response categories")
+    parser.add_argument("--val_split", action="store",
+                        default=0.2, type=float,
+                        help="fraction of data to use in validation")
+    parser.add_argument("--test_cell_split", action="store",
+                        default=None, type=float,
+                        help="cell lines to use in test; if None use predefined unseen cell lines instead of sampling cell lines used in training")
     parser.add_argument("--train_steps", action="store",
                         default=0, type=int,
                         help="overrides the number of training batches per epoch if set to nonzero")
     parser.add_argument("--val_steps", action="store",
                         default=0, type=int,
                         help="overrides the number of validation batches per epoch if set to nonzero")
+    parser.add_argument("--test_steps", action="store",
+                        default=0, type=int,
+                        help="overrides the number of test batches per epoch if set to nonzero")
     parser.add_argument("--save", action="store",
                         default='save',
                         help="prefix of output files")
@@ -316,10 +327,12 @@ def main():
 
     ext = extension_from_parameters(args)
 
-    loader = p1b3.DataLoader(feature_subsample=args.feature_subsample,
-                             scaling=args.scaling,
+    loader = p1b3.DataLoader(val_split=args.val_split,
+                             test_cell_split=args.test_cell_split,
                              cell_features=args.cell_features,
                              drug_features=args.drug_features,
+                             feature_subsample=args.feature_subsample,
+                             scaling=args.scaling,
                              scramble=args.scramble,
                              min_logconc=args.min_logconc,
                              max_logconc=args.max_logconc,
@@ -368,6 +381,7 @@ def main():
 
     train_steps = args.train_steps if args.train_steps else train_steps
     val_steps = args.val_steps if args.val_steps else val_steps
+    test_steps = args.test_steps if args.test_steps else test_steps
 
     checkpointer = ModelCheckpoint(filepath=args.save+'.model'+ext+'.h5', save_best_only=True)
     progbar = MyProgbarLogger(train_steps * args.batch_size)

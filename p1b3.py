@@ -38,7 +38,7 @@ def scale(df, scaling=None):
         type of scaling to apply
     """
 
-    if scaling is None or scaling == 'None':
+    if scaling is None or scaling.lower() == 'none':
         return df
 
     df = df.dropna(axis=1, how='any')
@@ -77,7 +77,7 @@ def impute_and_scale(df, scaling='std'):
     imputer = Imputer(strategy='mean', axis=0)
     mat = imputer.fit_transform(df)
 
-    if scaling is None:
+    if scaling is None or scaling.lower() == 'none':
         return pd.DataFrame(mat, columns=df.columns)
 
     if scaling == 'maxabs':
@@ -324,7 +324,7 @@ class DataLoader(object):
     """Load merged drug response, drug descriptors and cell line essay data
     """
 
-    def __init__(self, val_split=0.2, shuffle=True,
+    def __init__(self, val_split=0.2, test_cell_split=None, shuffle=True,
                  cell_features=['expression'], drug_features=['descriptors'],
                  feature_subsample=None, scaling='std', scramble=False,
                  min_logconc=-5., max_logconc=-4., subsample='naive_balancing',
@@ -335,7 +335,9 @@ class DataLoader(object):
         Parameters
         ----------
         val_split : float, optional (default 0.2)
-            percentage of data to use in validation
+            fraction of data to use in validation
+        test_cell_split : float or None, optional (default None)
+            fraction of cell lines to use in test; if None use predefined unseen cell lines instead of sampling cell lines used in training
         shuffle : True or False, optional (default True)
             if True shuffles the merged data before splitting training and validation sets
         cell_features: list of strings from 'expression', 'mirna', 'proteome', 'all', 'categorical' (default ['expression'])
@@ -432,11 +434,17 @@ class DataLoader(object):
         df_test_cell = pd.read_csv(test_cell_path)
         df_test_drug = pd.read_csv(test_drug_path, dtype={'NSC':object})
 
-        df_test = df.merge(df_test_cell, on='CELLNAME').merge(df_test_drug, on='NSC')
-        logger.debug('Set aside {} rows as test data'.format(df_test.shape[0]))
-
         df_train_val = df[(~df['NSC'].isin(df_test_drug['NSC'])) & (~df['CELLNAME'].isin(df_test_cell['CELLNAME']))]
-        logger.debug('Combined train and test set has {} rows'.format(df_train_val.shape[0]))
+        logger.debug('Combined train and validation set has {} rows'.format(df_train_val.shape[0]))
+
+        if test_cell_split and test_cell_split > 0:
+            df_test_cell = df_train_val[['CELLNAME']].drop_duplicates().sample(frac=1.0, random_state=50).sample(frac=test_cell_split, random_state=SEED)
+            logger.info('Use unseen drugs and a fraction of seen cell lines for testing: ' + ', '.join(sorted(list(df_test_cell['CELLNAME']))))
+        else:
+            logger.info('Use unseen drugs and predefined unseen cell lines for testing: ' + ', '.join(sorted(list(df_test_cell['CELLNAME']))))
+
+        df_test = df.merge(df_test_cell, on='CELLNAME').merge(df_test_drug, on='NSC')
+        logger.debug('Test set has {} rows'.format(df_test.shape[0]))
 
         if shuffle:
             df_train_val = df_train_val.sample(frac=1.0, random_state=SEED)
