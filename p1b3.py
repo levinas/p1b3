@@ -428,7 +428,7 @@ class DataLoader(object):
                 self.df_drug_rand = df_rand.reset_index()
                 self.input_shapes['drug_random_vector'] = (self.df_drug_rand.shape[1] - 1,)
 
-        logger.debug('Filltered down to {} rows with matching information.'.format(df.shape[0]))
+        logger.debug('Filtered down to {} rows with matching information.'.format(df.shape[0]))
         # df[['GROWTH', 'LOG_CONCENTRATION']].to_csv('filtered.response.csv')
 
         df_test_cell = pd.read_csv(test_cell_path)
