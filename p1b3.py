@@ -342,7 +342,7 @@ class DataLoader(object):
             if True shuffles the merged data before splitting training and validation sets
         cell_features: list of strings from 'expression', 'mirna', 'proteome', 'all', 'categorical' (default ['expression'])
             use one or more cell line feature sets: gene expression, microRNA, proteomics; or, use 'categorical' for one-hot encoded cell lines
-        drug_features: list of strings from 'descriptors', 'latent', 'both', 'noise' (default ['descriptors'])
+        drug_features: list of strings from 'descriptors', 'latent', 'all', 'noise' (default ['descriptors'])
             use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder trained on NSC drugs, or both; use random features if set to noise
         feature_subsample: None or integer (default None)
             number of feature columns to use from cellline expressions and drug descriptors
@@ -382,7 +382,7 @@ class DataLoader(object):
         else:
             self.cell_features = cell_features
 
-        if 'both' in drug_features:
+        if 'all' in drug_features:
             self.drug_features = ['descriptors', 'latent']
         else:
             self.drug_features = drug_features

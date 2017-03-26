@@ -126,8 +126,8 @@ def get_parser():
                         help="use one or more cell line feature sets: 'expression', 'mirna', 'proteome', 'all'; or use 'categorical' for one-hot encoding of cell lines")
     parser.add_argument("--drug_features", action="store", nargs='+',
                         default=['descriptors'],
-                        choices=['descriptors', 'latent', 'both', 'noise'],
-                        help="use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder, or both, or random features; 'descriptors','latent', 'both', 'noise'")
+                        choices=['descriptors', 'latent', 'all', 'noise'],
+                        help="use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder, or both, or random features; 'descriptors','latent', 'all', 'noise'")
     parser.add_argument("--feature_subsample", action="store",
                         default=FEATURE_SUBSAMPLE, type=int,
                         help="number of features to randomly sample from each category (cellline expression, drug descriptors, etc), 0 means using all features")
