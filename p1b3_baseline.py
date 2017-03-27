@@ -17,7 +17,7 @@ from itertools import tee, islice
 from keras import backend as K
 from keras import metrics
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, LocallyConnected1D, Convolution1D, MaxPooling1D, Flatten
+from keras.layers import Activation, BatchNormalization, Dense, Dropout, LocallyConnected1D, Conv1D, MaxPooling1D, Flatten
 from keras.callbacks import Callback, ModelCheckpoint, ProgbarLogger
 
 from sklearn.preprocessing import Imputer
@@ -65,8 +65,8 @@ D3 = 100
 D4 = 50
 DENSE_LAYERS = [D1, D2, D3, D4]
 
-# Number of units per locally connected layer
-CONVOLUTION_LAYERS = [0, 0, 0] # filters, filter_len, stride
+# Number of units per convolution layer or locally connected layer
+CONV_LAYERS = [0, 0, 0] # filters, filter_len, stride
 POOL = 10
 
 MIN_LOGCONC = -5.
@@ -99,8 +99,10 @@ def get_parser():
     parser.add_argument("-z", "--batch_size", type=int,
                         default=BATCH_SIZE,
                         help="batch size")
-    parser.add_argument("--convolution", nargs='+', type=int,
-                        default=CONVOLUTION_LAYERS,
+    parser.add_argument("--batch_normalization", action="store_true",
+                        help="use batch normalization")
+    parser.add_argument("--conv", nargs='+', type=int,
+                        default=CONV_LAYERS,
                         help="integer array describing convolution layers: conv1_filters, conv1_filter_len, conv1_stride, conv2_filters, conv2_filter_len, conv2_stride ...")
     parser.add_argument("--dense", nargs='+', type=int,
                         default=DENSE_LAYERS,
@@ -184,13 +186,13 @@ def extension_from_parameters(args):
     ext += '.E={}'.format(args.epochs)
     if args.feature_subsample:
         ext += '.F={}'.format(args.feature_subsample)
-    if args.convolution:
+    if args.conv:
         name = 'LC' if args.locally_connected else 'C'
-        layer_list = list(range(0, len(args.convolution), 3))
+        layer_list = list(range(0, len(args.conv), 3))
         for l, i in enumerate(layer_list):
-            filters = args.convolution[i]
-            filter_len = args.convolution[i+1]
-            stride = args.convolution[i+2]
+            filters = args.conv[i]
+            filter_len = args.conv[i+1]
+            stride = args.conv[i+2]
             if filters <= 0 or filter_len <= 0 or stride <= 0:
                 break
             ext += '.{}{}={},{},{}'.format(name, l+1, filters, filter_len, stride)
@@ -199,6 +201,8 @@ def extension_from_parameters(args):
     for i, n in enumerate(args.dense):
         if n:
             ext += '.D{}={}'.format(i+1, n)
+    if args.batch_normalization:
+        ext += '.BN'
     ext += '.S={}'.format(args.scaling)
 
     return ext
@@ -370,26 +374,32 @@ def main():
     out_dim = 1
 
     model = Sequential()
-    if args.convolution and args.convolution[0]:
+    if args.conv and args.conv[0]:
         gen_shape = 'add_1d'
-        layer_list = list(range(0, len(args.convolution), 3))
+        layer_list = list(range(0, len(args.conv), 3))
         for l, i in enumerate(layer_list):
-            filters = args.convolution[i]
-            filter_len = args.convolution[i+1]
-            stride = args.convolution[i+2]
+            filters = args.conv[i]
+            filter_len = args.conv[i+1]
+            stride = args.conv[i+2]
             if filters <= 0 or filter_len <= 0 or stride <= 0:
                 break
             if args.locally_connected:
-                model.add(LocallyConnected1D(filters, filter_len, strides=stride, input_shape=(loader.input_dim, 1), activation=args.activation))
+                model.add(LocallyConnected1D(filters, filter_len, strides=stride, input_shape=(loader.input_dim, 1)))
             else:
-                model.add(Convolution1D(filters, filter_len, strides=stride, input_shape=(loader.input_dim, 1), activation=args.activation))
+                model.add(Conv1D(filters, filter_len, strides=stride, input_shape=(loader.input_dim, 1)))
+            if args.batch_normalization:
+                model.add(BatchNormalization())
+            model.add(Activation(args.activation))
             if args.pool:
                 model.add(MaxPooling1D(pool_size=args.pool))
         model.add(Flatten())
 
     for layer in args.dense:
         if layer:
-            model.add(Dense(layer, input_dim=loader.input_dim, activation=args.activation))
+            model.add(Dense(layer, input_dim=loader.input_dim))
+            if args.batch_normalization:
+                model.add(BatchNormalization())
+            model.add(Activation(args.activation))
             if args.drop:
                 model.add(Dropout(args.drop))
     model.add(Dense(out_dim))
