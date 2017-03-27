@@ -196,7 +196,7 @@ def extension_from_parameters(args):
             if filters <= 0 or filter_len <= 0 or stride <= 0:
                 break
             ext += '.{}{}={},{},{}'.format(name, l+1, filters, filter_len, stride)
-        if args.pool and layer_list[0] and layer_list[1]:
+        if args.pool and args.conv[0] and args.conv[1]:
             ext += '.P={}'.format(args.pool)
     for i, n in enumerate(args.dense):
         if n:
