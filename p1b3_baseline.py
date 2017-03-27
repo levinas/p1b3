@@ -29,7 +29,7 @@ mpl.use('Agg')
 import matplotlib.pyplot as plt
 
 import p1b3
-
+from p1b3 import logger
 
 # Model and Training parameters
 
@@ -77,6 +77,7 @@ CATEGORY_CUTOFFS = [0.]
 VAL_SPLIT = 0.2
 TEST_CELL_SPLIT = 0.15
 
+
 np.set_printoptions(threshold=np.nan)
 np.random.seed(SEED)
 
@@ -86,86 +87,89 @@ def get_parser():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="increase output verbosity")
-    parser.add_argument("-a", "--activation", action="store",
+    parser.add_argument("-a", "--activation",
                         default=ACTIVATION,
                         help="keras activation function to use in inner layers: relu, tanh, sigmoid...")
-    parser.add_argument("-e", "--epochs", action="store",
-                        default=EPOCHS, type=int,
+    parser.add_argument("-e", "--epochs", type=int,
+                        default=EPOCHS,
                         help="number of training epochs")
-    parser.add_argument("-z", "--batch_size", action="store",
-                        default=BATCH_SIZE, type=int,
+    parser.add_argument('-l', '--log', dest='logfile',
+                        default=None,
+                        help="log file")
+    parser.add_argument("-z", "--batch_size", type=int,
+                        default=BATCH_SIZE,
                         help="batch size")
-    parser.add_argument("--convolution", action="store", nargs='+', type=int,
+    parser.add_argument("--convolution", nargs='+', type=int,
                         default=CONVOLUTION_LAYERS,
                         help="integer array describing convolution layers: conv1_filters, conv1_filter_len, conv1_stride, conv2_filters, conv2_filter_len, conv2_stride ...")
-    parser.add_argument("--dense", action="store", nargs='+', type=int,
+    parser.add_argument("--dense", nargs='+', type=int,
                         default=DENSE_LAYERS,
                         help="number of units in fully connected layers in an integer array")
-    parser.add_argument("--drop", action="store",
-                        default=DROP, type=float,
+    parser.add_argument("--drop", type=float,
+                        default=DROP,
                         help="ratio of dropout used in fully connected layers")
     parser.add_argument("--locally_connected", action="store_true",
                         default=False,
                         help="use locally connected layers instead of convolution layers")
-    parser.add_argument("--optimizer", action="store",
+    parser.add_argument("--optimizer",
                         default=OPTIMIZER,
                         help="keras optimizer to use: sgd, rmsprop, ...")
-    parser.add_argument("--loss", action="store",
+    parser.add_argument("--loss",
                         default=LOSS,
                         help="keras loss function to use: mse, ...")
-    parser.add_argument("--pool", action="store",
-                        default=POOL, type=int,
+    parser.add_argument("--pool", type=int,
+                        default=POOL,
                         help="pooling layer length")
-    parser.add_argument("--scaling", action="store",
+    parser.add_argument("--scaling",
                         default=SCALING,
                         choices=['minabs', 'minmax', 'std', 'none'],
                         help="type of feature scaling; 'minabs': to [-1,1]; 'minmax': to [0,1], 'std': standard unit normalization; 'none': no normalization")
-    parser.add_argument("--cell_features", action="store", nargs='+',
+    parser.add_argument("--cell_features", nargs='+',
                         default=['expression'],
                         choices=['expression', 'mirna', 'proteome', 'all', 'categorical'],
                         help="use one or more cell line feature sets: 'expression', 'mirna', 'proteome', 'all'; or use 'categorical' for one-hot encoding of cell lines")
-    parser.add_argument("--drug_features", action="store", nargs='+',
+    parser.add_argument("--drug_features", nargs='+',
                         default=['descriptors'],
                         choices=['descriptors', 'latent', 'all', 'noise'],
                         help="use dragon7 descriptors, latent representations from Aspuru-Guzik's SMILES autoencoder, or both, or random features; 'descriptors','latent', 'all', 'noise'")
-    parser.add_argument("--feature_subsample", action="store",
-                        default=FEATURE_SUBSAMPLE, type=int,
+    parser.add_argument("--feature_subsample", type=int,
+                        default=FEATURE_SUBSAMPLE,
                         help="number of features to randomly sample from each category (cellline expression, drug descriptors, etc), 0 means using all features")
-    parser.add_argument("--min_logconc", action="store",
-                        default=MIN_LOGCONC, type=float,
+    parser.add_argument("--min_logconc", type=float,
+                        default=MIN_LOGCONC,
                         help="min log concentration of dose response data to use: -3.0 to -7.0")
-    parser.add_argument("--max_logconc", action="store",
-                        default=MAX_LOGCONC, type=float,
+    parser.add_argument("--max_logconc",  type=float,
+                        default=MAX_LOGCONC,
                         help="max log concentration of dose response data to use: -3.0 to -7.0")
-    parser.add_argument("--subsample", action="store",
+    parser.add_argument("--subsample",
                         default='naive_balancing',
                         choices=['naive_balancing', 'none'],
                         help="dose response subsample strategy; 'none' or 'naive_balancing'")
-    parser.add_argument("--category_cutoffs", action="store", nargs='+', type=float,
+    parser.add_argument("--category_cutoffs", nargs='+', type=float,
                         default=CATEGORY_CUTOFFS,
                         help="list of growth cutoffs (between -1 and +1) seperating non-response and response categories")
-    parser.add_argument("--val_split", action="store",
-                        default=VAL_SPLIT, type=float,
+    parser.add_argument("--val_split", type=float,
+                        default=VAL_SPLIT,
                         help="fraction of data to use in validation")
-    parser.add_argument("--test_cell_split", action="store",
-                        default=TEST_CELL_SPLIT, type=float,
+    parser.add_argument("--test_cell_split", type=float,
+                        default=TEST_CELL_SPLIT,
                         help="cell lines to use in test; if None use predefined unseen cell lines instead of sampling cell lines used in training")
-    parser.add_argument("--train_steps", action="store",
-                        default=0, type=int,
+    parser.add_argument("--train_steps", type=int,
+                        default=0,
                         help="overrides the number of training batches per epoch if set to nonzero")
-    parser.add_argument("--val_steps", action="store",
-                        default=0, type=int,
+    parser.add_argument("--val_steps", type=int,
+                        default=0,
                         help="overrides the number of validation batches per epoch if set to nonzero")
-    parser.add_argument("--test_steps", action="store",
-                        default=0, type=int,
+    parser.add_argument("--test_steps", type=int,
+                        default=0,
                         help="overrides the number of test batches per epoch if set to nonzero")
-    parser.add_argument("--save", action="store",
+    parser.add_argument("--save",
                         default='save',
                         help="prefix of output files")
     parser.add_argument("--scramble", action="store_true",
                         help="randomly shuffle dose response data")
-    parser.add_argument("--workers", action="store",
-                        default=WORKERS, type=int,
+    parser.add_argument("--workers", type=int,
+                        default=WORKERS,
                         help="number of data generator workers")
 
     return parser
@@ -282,53 +286,73 @@ class MyLossHistory(Callback):
     def on_train_begin(self, logs={}):
         self.best_val_loss = np.Inf
         self.best_val_acc = -np.Inf
-        self.best_model = None
 
     def on_epoch_end(self, batch, logs={}):
-        if float(logs.get('val_loss', 0)) < self.best_val_loss:
-            self.best_model = self.model
-            val_loss, val_acc, y_true, y_pred, y_true_class, y_pred_class = evaluate_model(self.best_model, self.val_gen, self.val_steps, self.metric, self.category_cutoffs)
-            test_loss, test_acc, _, _, _, _ = evaluate_model(self.best_model, self.test_gen, self.test_steps, self.metric, self.category_cutoffs)
-            self.progbar.append_extra_log_values([('val_acc', val_acc), ('test_loss', test_loss), ('test_acc', test_acc)])
-            plot_error(y_true, y_pred, batch, self.ext, self.pre)
+        val_loss, val_acc, y_true, y_pred, y_true_class, y_pred_class = evaluate_model(self.model, self.val_gen, self.val_steps, self.metric, self.category_cutoffs)
+        test_loss, test_acc, _, _, _, _ = evaluate_model(self.model, self.test_gen, self.test_steps, self.metric, self.category_cutoffs)
+        self.progbar.append_extra_log_values([('val_acc', val_acc), ('test_loss', test_loss), ('test_acc', test_acc)])
         self.best_val_loss = min(float(logs.get('val_loss', 0)), self.best_val_loss)
         self.best_val_acc = max(float(logs.get('val_acc', 0)), self.best_val_acc)
+        if float(logs.get('val_loss', 0)) < self.best_val_loss:
+            plot_error(y_true, y_pred, batch, self.ext, self.pre)
 
 
 class MyProgbarLogger(ProgbarLogger):
     def __init__(self, samples):
-        super(MyProgbarLogger, self).__init__()
+        super(MyProgbarLogger, self).__init__(count_mode='samples')
         self.samples = samples
 
-    def on_train_begin(self, logs={}):
+    def on_train_begin(self, logs=None):
         super(MyProgbarLogger, self).on_train_begin(logs)
         self.verbose = 1
         self.extra_log_values = []
         self.params['samples'] = self.samples
 
+    def on_batch_begin(self, batch, logs=None):
+        if self.seen < self.target:
+            self.log_values = []
+            self.extra_log_values = []
+
     def append_extra_log_values(self, tuples):
         for k, v in tuples:
             self.extra_log_values.append((k, v))
 
-    def on_epoch_end(self, epoch, logs={}):
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        epoch_log = 'Epoch {}/{}'.format(epoch + 1, self.epochs)
         for k in self.params['metrics']:
             if k in logs:
                 self.log_values.append((k, logs[k]))
+                epoch_log += ' - {}: {:.4f}'.format(k, logs[k])
         for k, v in self.extra_log_values:
             self.log_values.append((k, v))
+            epoch_log += ' - {}: {:.4f}'.format(k, v)
         if self.verbose:
             self.progbar.update(self.seen, self.log_values, force=True)
+        logger.debug(epoch_log)
 
 
 def main():
     parser = get_parser()
     args = parser.parse_args()
-    print('Args:', args)
-
-    loggingLevel = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(level=loggingLevel, format='')
 
     ext = extension_from_parameters(args)
+
+    logfile = args.logfile if args.logfile else args.save+ext+'.log'
+
+    fh = logging.FileHandler(logfile)
+    fh.setFormatter(logging.Formatter("[%(asctime)s %(process)d] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    fh.setLevel(logging.DEBUG)
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(logging.Formatter(''))
+    sh.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(fh)
+    logger.addHandler(sh)
+
+    logger.info('Args: {}'.format(args))
 
     loader = p1b3.DataLoader(val_split=args.val_split,
                              test_cell_split=args.test_cell_split,
@@ -371,12 +395,14 @@ def main():
     model.add(Dense(out_dim))
 
     model.summary()
+    logger.debug('Model: {}'.format(model.to_json()))
+
     model.compile(loss=args.loss, optimizer=args.optimizer)
 
-    train_gen = p1b3.DataGenerator(loader, batch_size=args.batch_size, shape=gen_shape).flow()
-    val_gen = p1b3.DataGenerator(loader, partition='val', batch_size=args.batch_size, shape=gen_shape).flow()
-    val_gen2 = p1b3.DataGenerator(loader, partition='val', batch_size=args.batch_size, shape=gen_shape).flow()
-    test_gen = p1b3.DataGenerator(loader, partition='test', batch_size=args.batch_size, shape=gen_shape).flow()
+    train_gen = p1b3.DataGenerator(loader, batch_size=args.batch_size, shape=gen_shape, name='train_gen').flow()
+    val_gen = p1b3.DataGenerator(loader, partition='val', batch_size=args.batch_size, shape=gen_shape, name='val_gen').flow()
+    val_gen2 = p1b3.DataGenerator(loader, partition='val', batch_size=args.batch_size, shape=gen_shape, name='val_gen2').flow()
+    test_gen = p1b3.DataGenerator(loader, partition='test', batch_size=args.batch_size, shape=gen_shape, name='test_gen').flow()
 
     train_steps = int(loader.n_train/args.batch_size)
     val_steps = int(loader.n_val/args.batch_size)

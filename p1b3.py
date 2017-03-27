@@ -494,7 +494,7 @@ class DataGenerator(object):
     """Generate training, validation or testing batches from loaded data
     """
 
-    def __init__(self, data, partition='train', batch_size=32, shape=None, concat=True):
+    def __init__(self, data, partition='train', batch_size=32, shape=None, concat=True, name=''):
         """Initialize data
 
         Parameters
@@ -516,6 +516,7 @@ class DataGenerator(object):
         self.batch_size = batch_size
         self.shape = shape
         self.concat = concat
+        self.name = name
 
         if partition == 'train':
             self.cycle = cycle(range(data.n_train))
@@ -536,6 +537,7 @@ class DataGenerator(object):
             self.lock.acquire()
             indices = list(islice(self.cycle, self.batch_size))
             # print("\nProcess: {}, Batch indices start: {}".format(multiprocessing.current_process().name, indices[0]))
+            # logger.debug('Gen {} at index: {}'.format(self.name, indices[0]))
             self.lock.release()
 
             df = self.data.df_response.iloc[indices, :]
